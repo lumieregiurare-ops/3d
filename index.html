@@ -1,0 +1,789 @@
+<!doctype html>
+<html lang="ja">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Depth Light Studio</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: full-height stage on the left, scrolling control rack on the right; stacks on phones. Single dark look by choice (tool UI). */
+:root{
+  --bg:#111217; --stage:#16171d; --panel:#1b1c23; --raise:#24252e; --line:#2e303b;
+  --fg:#e9e7ef; --muted:#8e90a2; --accent:#f3a53a; --accent-ink:#1c1304; --sel:#5fd3c4;
+  --f-ui:"Zen Kaku Gothic New","Hiragino Sans","Yu Gothic UI","Meiryo",system-ui,sans-serif;
+  --f-num:"IBM Plex Mono",ui-monospace,Consolas,monospace;
+  color-scheme:dark;
+}
+html,body{height:100%}
+body{background:var(--bg);color:var(--fg);font-family:var(--f-ui);font-size:13px;margin:0}
+*{box-sizing:border-box}
+button,input,select{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--sel);outline-offset:2px}
+
+.app{display:grid;grid-template-columns:minmax(0,1fr) 340px;height:100%}
+.stage{position:relative;background:var(--stage);overflow:hidden;touch-action:none}
+#gl{position:absolute;inset:0;width:100%;height:100%;display:block}
+.viewtabs{position:absolute;top:12px;left:12px;display:flex;gap:2px;background:rgba(17,18,23,.78);border:1px solid var(--line);border-radius:8px;padding:3px;backdrop-filter:blur(6px)}
+.viewtabs button{background:none;border:0;padding:5px 10px;border-radius:5px;color:var(--muted);cursor:pointer;font-size:12px}
+.viewtabs button[aria-pressed="true"]{background:var(--raise);color:var(--fg)}
+.hint{position:absolute;left:12px;bottom:12px;right:12px;display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;color:var(--muted);font-size:11.5px;pointer-events:none}
+.hint b{color:var(--fg);font-weight:500}
+.drop{position:absolute;inset:10px;border:2px dashed var(--accent);border-radius:12px;display:grid;place-items:center;background:rgba(243,165,58,.08);color:var(--accent);font-size:15px;pointer-events:none}
+
+.panel{background:var(--panel);border-left:1px solid var(--line);overflow-y:auto;padding-block:6px 40px}
+.sec{padding:14px 16px;border-bottom:1px solid var(--line);display:grid;gap:9px}
+.sec h2{margin:0;font-size:11px;font-weight:500;letter-spacing:.12em;color:var(--muted)}
+.row{display:grid;grid-template-columns:7.6em minmax(0,1fr) 3.4em;align-items:center;gap:8px}
+.row label{color:var(--fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row output{font-family:var(--f-num);font-size:11.5px;text-align:right;color:var(--muted);font-variant-numeric:tabular-nums}
+input[type=range]{width:100%;accent-color:var(--accent);margin:0;height:18px}
+input[type=color]{width:100%;height:20px;border:1px solid var(--line);border-radius:3px;background:none;padding:0;cursor:pointer}
+input[type=color]::-webkit-color-swatch-wrapper{padding:0}
+input[type=color]::-webkit-color-swatch{border:0;border-radius:2px}
+.btns{display:flex;flex-wrap:wrap;gap:6px}
+.btn{background:var(--raise);border:1px solid var(--line);border-radius:6px;padding:5px 10px;cursor:pointer;font-size:12px}
+.btn:hover{border-color:var(--muted)}
+.btn.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);font-weight:500}
+.btn:disabled{opacity:.4;cursor:default}
+.chip{background:none;border:1px solid var(--line);border-radius:999px;padding:3px 10px 3px 8px;cursor:pointer;font-size:12px;display:inline-flex;align-items:center;gap:6px}
+.chip i{width:9px;height:9px;border-radius:50%;display:inline-block}
+.chip[aria-pressed="true"]{border-color:var(--sel);color:var(--sel)}
+.chip.off{opacity:.45}
+.seg{display:grid;grid-template-columns:1fr 1fr;background:var(--bg);border:1px solid var(--line);border-radius:7px;padding:2px}
+.seg button{background:none;border:0;padding:5px;border-radius:5px;color:var(--muted);cursor:pointer}
+.seg button[aria-pressed="true"]{background:var(--raise);color:var(--fg)}
+.check{display:flex;align-items:center;gap:7px;cursor:pointer}
+.check input{accent-color:var(--accent);margin:0}
+.pad{width:100%;height:150px;border-radius:8px;background:var(--bg);border:1px solid var(--line);cursor:crosshair;touch-action:none;display:block}
+.note{color:var(--muted);font-size:11.5px;line-height:1.55;margin:0}
+.lightcount{font-family:var(--f-num);font-size:11px;color:var(--muted);align-self:center}
+[hidden]{display:none!important}
+
+@media (max-width:760px){
+  html,body{height:auto}
+  .app{grid-template-columns:1fr;height:auto}
+  .stage{height:58vh;min-height:320px;position:sticky;top:env(safe-area-inset-top,0px);z-index:2}
+  .panel{border-left:0;overflow:visible}
+}
+@media (prefers-reduced-motion:reduce){ .drop{transition:none} }
+</style>
+
+<div class="app">
+  <div class="stage" id="stage">
+    <canvas id="gl"></canvas>
+    <div class="viewtabs" role="group" aria-label="表示">
+      <button data-view="0" aria-pressed="true">合成</button>
+      <button data-view="1" aria-pressed="false">元絵</button>
+      <button data-view="2" aria-pressed="false">深度</button>
+      <button data-view="3" aria-pressed="false">法線</button>
+      <button data-view="4" aria-pressed="false">光だけ</button>
+    </div>
+    <div class="hint"><span id="imgName">サンプル画像</span><span>カーソルで視点 ・ <b>画像をドロップ / Ctrl+V</b> で読み込み</span></div>
+    <div class="drop" id="drop" hidden>ここに画像をドロップ</div>
+  </div>
+
+  <aside class="panel" id="panel">
+    <section class="sec">
+      <h2>画像</h2>
+      <div class="btns">
+        <button class="btn primary" id="openBtn">画像を開く</button>
+        <button class="btn" id="pngBtn">PNG保存</button>
+        <button class="btn" id="vidBtn">動画保存 (4秒)</button>
+      </div>
+      <input type="file" id="file" accept="image/*" hidden>
+    </section>
+
+    <section class="sec" id="secDepth"><h2>奥行きの生成</h2></section>
+    <section class="sec" id="secMotion"><h2>動き</h2></section>
+
+    <section class="sec" id="secLight">
+      <h2>ライト</h2>
+      <div class="btns" id="chips"></div>
+      <div class="btns">
+        <button class="btn" id="addLight">＋ 追加</button><span class="lightcount" id="lcount"></span>
+        <button class="btn" id="delLight">削除</button>
+        <button class="btn" id="togLight">オン/オフ</button>
+      </div>
+      <canvas class="pad" id="pad" aria-label="ライトの位置。ドラッグで移動"></canvas>
+      <label class="check"><input type="checkbox" id="autoRot"> 自動で回す</label>
+      <div id="lightRows" style="display:grid;gap:9px"></div>
+    </section>
+
+    <section class="sec">
+      <h2>プリセット</h2>
+      <div class="btns" id="presets"></div>
+    </section>
+
+    <section class="sec" id="secShade">
+      <h2>陰影</h2>
+      <div class="seg" role="group" aria-label="陰影モード">
+        <button data-mode="0" aria-pressed="true">通常</button>
+        <button data-mode="1" aria-pressed="false">セル</button>
+      </div>
+      <div id="shadeRows" style="display:grid;gap:9px"></div>
+      <div id="celOnly" style="display:grid;gap:9px" hidden></div>
+      <label class="check"><input type="checkbox" id="castOn"> 落ち影（深度で影を落とす）</label>
+      <div id="shadeRows2" style="display:grid;gap:9px"></div>
+    </section>
+    <section class="sec">
+      <p class="note">奥行きは画像の輪郭・線画・明るさから自動で推定します。背景が単色か透過PNGだと立体感が出やすくなります。</p>
+    </section>
+  </aside>
+</div>
+
+<script>
+"use strict";
+const $ = s => document.querySelector(s);
+const MAXL = 4;
+
+/* ---------- state ---------- */
+const BASE = {
+  // depth generation
+  puff:0.75, detail:0.45, lineCut:0.30, lumW:0.15, smooth:5, bgThr:0.16, cutout:false,
+  // motion
+  depth:0.30, bump:0.35, texDetail:0.25, follow:1.0, maxAngle:20, sway:0.35, swaySpeed:0.5, zoom:1.0,
+  // shading
+  cel:0, ambColor:"#9aa3cf", amb:0.62, wrap:0.35, bound:0.15, soft:0.02, steps:1,
+  castOn:true, castStr:0.7, castSoft:23.5, spec:0.30, sharp:40, rim:0.45, rimColor:"#ffe9d2", exposure:1.0,
+};
+const BASE_LIGHTS = [{color:"#fff4e6", strength:1.0, height:0.55, reach:1.1, x:-0.55, y:0.55, on:true, auto:false}];
+let S = {...BASE};
+let lights = BASE_LIGHTS.map(l => ({...l}));
+let sel = 0;
+let view = 0;
+let needDepth = true;
+
+/* ---------- presets ---------- */
+const PRESETS = {
+  "スタジオ": {s:{cel:0, ambColor:"#b9c1da", amb:0.5, wrap:0.3, spec:0.25, sharp:30, rim:0.3, rimColor:"#ffffff", castStr:0.6, castSoft:30},
+    l:[{color:"#fff3e2",strength:1.1,height:0.8,reach:1.4,x:-0.6,y:0.6},{color:"#cfe0ff",strength:0.45,height:0.5,reach:1.2,x:0.8,y:0.1}]},
+  "セル標準": {s:{cel:1, ambColor:"#9aa3cf", amb:0.62, wrap:0.6, bound:0.2, soft:0.02, steps:1, spec:0.4, sharp:40, rim:0.55, rimColor:"#ffffff", castStr:0.75, castSoft:12},
+    l:[{color:"#fff6ec",strength:1.15,height:0.6,reach:1.3,x:-0.6,y:0.6}]},
+  "夕日": {s:{cel:0, ambColor:"#6d5c9c", amb:0.55, wrap:0.25, spec:0.35, sharp:24, rim:0.85, rimColor:"#ffae6a", castStr:0.8, castSoft:18},
+    l:[{color:"#ff9f5a",strength:1.6,height:0.3,reach:1.6,x:0.85,y:0.15}]},
+  "夜の窓": {s:{cel:1, ambColor:"#2d3355", amb:0.55, wrap:0.4, bound:0.25, soft:0.05, steps:2, spec:0.5, sharp:60, rim:0.6, rimColor:"#9cc0ff", castStr:0.85, castSoft:8},
+    l:[{color:"#9bbcff",strength:1.4,height:0.4,reach:1.4,x:-0.9,y:0.35}]},
+  "下から": {s:{cel:0, ambColor:"#3e3f5e", amb:0.5, wrap:0.2, spec:0.3, sharp:30, rim:0.3, rimColor:"#ffd9a8", castStr:0.8, castSoft:15},
+    l:[{color:"#ffd9a0",strength:1.5,height:0.35,reach:1.3,x:0,y:-0.9}]},
+  "アニメ2灯": {s:{cel:1, ambColor:"#a6a4d6", amb:0.6, wrap:0.5, bound:0.15, soft:0.02, steps:1, spec:0.45, sharp:50, rim:0.9, rimColor:"#ffd2ea", castStr:0.7, castSoft:12},
+    l:[{color:"#fff4e8",strength:1.1,height:0.6,reach:1.3,x:-0.6,y:0.6},{color:"#ffc6e2",strength:0.9,height:-0.3,reach:1.4,x:0.85,y:0.25}]},
+};
+function applyPreset(p){
+  Object.assign(S, p.s);
+  lights = p.l.map(l => ({on:true, auto:false, ...l}));
+  sel = 0; refreshUI();
+}
+
+/* ---------- UI construction ---------- */
+const registry = [];
+function slider(parent, key, label, min, max, step, objFn, opts = {}){
+  const id = "s_" + (opts.prefix || "") + key;
+  const row = document.createElement("div"); row.className = "row";
+  const isColor = opts.color;
+  row.innerHTML = `<label for="${id}">${label}</label>` +
+    (isColor ? `<input type="color" id="${id}">` : `<input type="range" id="${id}" min="${min}" max="${max}" step="${step}">`) +
+    `<output></output>`;
+  parent.appendChild(row);
+  const input = row.querySelector("input"), out = row.querySelector("output");
+  const dec = (step >= 1 || !step) ? 0 : String(step).split(".")[1].length;
+  const fmt = v => isColor ? "" : Number(v).toFixed(dec);
+  input.addEventListener("input", () => {
+    const o = objFn(); if (!o) return;
+    o[key] = isColor ? input.value : parseFloat(input.value);
+    out.textContent = fmt(o[key]);
+    if (opts.depth) needDepth = true;
+    if (opts.after) opts.after();
+  });
+  registry.push({sync(){ const o = objFn(); if (!o) return; input.value = o[key]; out.textContent = fmt(o[key]); }});
+}
+const st = () => S, li = () => lights[sel];
+
+const dS = $("#secDepth");
+slider(dS,"puff","全体の膨らみ",0,1,0.01,st,{depth:1});
+slider(dS,"detail","パーツの膨らみ",0,1,0.01,st,{depth:1});
+slider(dS,"lineCut","線画で区切る",0,1,0.01,st,{depth:1});
+slider(dS,"lumW","明るさ→手前",-1,1,0.01,st,{depth:1});
+slider(dS,"smooth","なめらかさ",0,20,1,st,{depth:1});
+slider(dS,"bgThr","背景の判定",0,0.6,0.01,st,{depth:1});
+{ const c = document.createElement("label"); c.className = "check";
+  c.innerHTML = `<input type="checkbox" id="cutout"> 背景を切り抜く`; dS.appendChild(c); }
+
+const mS = $("#secMotion");
+slider(mS,"depth","奥行き（動き）",0,1,0.01,st);
+slider(mS,"maxAngle","傾きの最大",0,45,1,st);
+slider(mS,"follow","カーソル追従",0,1,0.01,st);
+slider(mS,"sway","自動の揺れ",0,1,0.01,st);
+slider(mS,"swaySpeed","揺れの速さ",0.05,2,0.05,st);
+slider(mS,"zoom","ズーム",0.5,2.5,0.01,st);
+
+const lR = $("#lightRows");
+slider(lR,"color","色",0,0,0,li,{color:1,prefix:"l"});
+slider(lR,"strength","強さ",0,3,0.01,li,{prefix:"l",after:drawChips});
+slider(lR,"height","高さ（手前）",-1,2,0.01,li,{prefix:"l"});
+slider(lR,"reach","届く距離",0.2,4,0.01,li,{prefix:"l"});
+
+const sR = $("#shadeRows");
+slider(sR,"ambColor","環境光の色",0,0,0,st,{color:1});
+slider(sR,"amb","環境光",0,1.5,0.01,st);
+slider(sR,"wrap","回り込み",0,1,0.01,st);
+const cR = $("#celOnly");
+slider(cR,"bound","影の境界位置",-0.5,0.9,0.01,st);
+slider(cR,"soft","境界のぼかし",0,0.3,0.005,st);
+slider(cR,"steps","影の段数",1,4,1,st);
+const sR2 = $("#shadeRows2");
+slider(sR2,"castStr","落ち影の濃さ",0,1,0.01,st);
+slider(sR2,"castSoft","落ち影の柔らかさ",0,60,0.5,st);
+slider(sR2,"bump","陰影の凹凸",0,1,0.01,st);
+slider(sR2,"texDetail","質感（細部）",0,1,0.01,st);
+slider(sR2,"spec","ハイライト",0,1.5,0.01,st);
+slider(sR2,"sharp","ハイライトの鋭さ",2,200,1,st);
+slider(sR2,"rim","リムライト",0,2,0.01,st);
+slider(sR2,"rimColor","リムの色",0,0,0,st,{color:1});
+slider(sR2,"exposure","露出",0.3,2,0.01,st);
+
+const presetBox = $("#presets");
+for (const name of Object.keys(PRESETS)){
+  const b = document.createElement("button"); b.className = "btn"; b.textContent = name;
+  b.onclick = () => applyPreset(PRESETS[name]); presetBox.appendChild(b);
+}
+{ const b = document.createElement("button"); b.className = "btn"; b.textContent = "初期設定に戻す";
+  b.onclick = () => { S = {...BASE, cutout:S.cutout}; lights = BASE_LIGHTS.map(l => ({...l})); sel = 0; needDepth = true; refreshUI(); };
+  presetBox.appendChild(b); }
+
+$("#cutout").onchange = e => { S.cutout = e.target.checked; };
+$("#castOn").onchange = e => { S.castOn = e.target.checked; };
+$("#autoRot").onchange = e => { if (lights[sel]) lights[sel].auto = e.target.checked; };
+document.querySelectorAll(".seg button").forEach(b => b.onclick = () => { S.cel = +b.dataset.mode; refreshUI(); });
+document.querySelectorAll(".viewtabs button").forEach(b => b.onclick = () => {
+  view = +b.dataset.view;
+  document.querySelectorAll(".viewtabs button").forEach(x => x.setAttribute("aria-pressed", x === b));
+});
+
+$("#addLight").onclick = () => {
+  if (lights.length >= MAXL) return;
+  const a = Math.random() * Math.PI * 2;
+  lights.push({color:"#ffffff", strength:0.6, height:0.5, reach:1.1, x:Math.cos(a)*0.7, y:Math.sin(a)*0.7, on:true, auto:false});
+  sel = lights.length - 1; refreshUI();
+};
+$("#delLight").onclick = () => { if (lights.length <= 1) return; lights.splice(sel, 1); sel = Math.max(0, sel - 1); refreshUI(); };
+$("#togLight").onclick = () => { if (lights[sel]) { lights[sel].on = !lights[sel].on; drawChips(); } };
+
+function drawChips(){
+  const box = $("#chips"); box.innerHTML = "";
+  lights.forEach((l, i) => {
+    const b = document.createElement("button");
+    b.className = "chip" + (l.on ? "" : " off");
+    b.setAttribute("aria-pressed", i === sel);
+    b.innerHTML = `<i style="background:${l.color}"></i>ライト${i + 1}`;
+    b.onclick = () => { sel = i; refreshUI(); };
+    box.appendChild(b);
+  });
+  $("#lcount").textContent = `${lights.length} / ${MAXL}灯`;
+  $("#addLight").disabled = lights.length >= MAXL;
+  $("#delLight").disabled = lights.length <= 1;
+}
+function refreshUI(){
+  registry.forEach(r => r.sync());
+  $("#cutout").checked = S.cutout;
+  $("#castOn").checked = S.castOn;
+  $("#autoRot").checked = !!(lights[sel] && lights[sel].auto);
+  document.querySelectorAll(".seg button").forEach(b => b.setAttribute("aria-pressed", +b.dataset.mode === S.cel));
+  $("#celOnly").hidden = !S.cel;
+  drawChips();
+}
+
+/* ---------- WebGL ---------- */
+const canvas = $("#gl");
+const gl = canvas.getContext("webgl2", {antialias:true, preserveDrawingBuffer:true, premultipliedAlpha:false});
+if (!gl) { document.querySelector(".hint").innerHTML = "<span>このブラウザは WebGL2 に対応していません。</span>"; throw new Error("no webgl2"); }
+
+const VS = `#version 300 es
+in vec2 aUV;
+uniform sampler2D uH;
+uniform mat4 uVP; uniform mat3 uRot; uniform vec2 uSize; uniform float uDepth;
+out vec2 vUV; out vec3 vW;
+void main(){
+  vUV = aUV;
+  float h = texture(uH, aUV).r;
+  vec3 p = vec3((aUV.x - .5) * uSize.x, (.5 - aUV.y) * uSize.y, (h - .5) * uDepth);
+  vW = uRot * p;
+  gl_Position = uVP * vec4(vW, 1.);
+}`;
+
+const FS = `#version 300 es
+precision highp float;
+in vec2 vUV; in vec3 vW;
+uniform sampler2D uImg, uH;
+uniform vec2 uHTexel, uITexel, uSize;
+uniform float uDepth, uBump, uTexDetail;
+uniform mat3 uRot; uniform vec3 uCam;
+uniform int uNL; uniform vec3 uLPos[4]; uniform vec3 uLCol[4]; uniform float uLReach[4];
+uniform vec3 uAmbCol, uRimCol;
+uniform float uAmb, uWrap, uBound, uSoft, uCastStr, uCastSoft, uSpec, uSharp, uRim, uExposure;
+uniform int uSteps, uCel, uCast, uView, uCut;
+out vec4 o;
+
+float H(vec2 uv){ return texture(uH, uv).r; }
+vec3 lin(vec3 c){ return pow(c, vec3(2.2)); }
+float luma(vec3 c){ return dot(c, vec3(.299, .587, .114)); }
+
+float castShadow(vec2 uv, vec3 Lm){
+  if (uDepth < 0.005 || Lm.z <= 0.0) return Lm.z <= 0.0 ? 0.0 : 1.0;
+  vec3 p = vec3((uv.x - .5) * uSize.x, (.5 - uv.y) * uSize.y, H(uv) * uDepth + 0.003);
+  float k = 40.0 / (uCastSoft + 1.0);
+  float res = 1.0, t = 0.006;
+  for (int i = 0; i < 48; i++){
+    vec3 q = p + Lm * t;
+    if (q.z > uDepth * 1.02) break;
+    vec2 quv = vec2(q.x / uSize.x + .5, .5 - q.y / uSize.y);
+    if (quv.x < 0. || quv.y < 0. || quv.x > 1. || quv.y > 1.) break;
+    float hs = H(quv) * uDepth;
+    res = min(res, k * (q.z - hs) / t);
+    if (res < -0.5) break;
+    t += 0.004 + t * 0.07;
+  }
+  res = clamp(res, 0., 1.);
+  return res * res * (3. - 2. * res);
+}
+
+void main(){
+  vec4 img = texture(uImg, vUV);
+  vec2 hm = texture(uH, vUV).rg;
+  if (uCut == 1 && hm.g < 0.5) discard;
+  vec3 alb = lin(img.rgb);
+
+  vec2 e = uHTexel;
+  float hl = H(vUV - vec2(e.x, 0.)), hr = H(vUV + vec2(e.x, 0.));
+  float hu = H(vUV - vec2(0., e.y)), hd = H(vUV + vec2(0., e.y));
+  float dzdx = (hr - hl) * uBump / (2. * e.x * uSize.x);
+  float dzdy = -(hd - hu) * uBump / (2. * e.y * uSize.y);
+  vec2 ie = uITexel * 1.5;
+  float il = luma(texture(uImg, vUV - vec2(ie.x, 0.)).rgb), ir = luma(texture(uImg, vUV + vec2(ie.x, 0.)).rgb);
+  float iu = luma(texture(uImg, vUV - vec2(0., ie.y)).rgb), id = luma(texture(uImg, vUV + vec2(0., ie.y)).rgb);
+  dzdx += (ir - il) * uTexDetail * 2.0;
+  dzdy -= (id - iu) * uTexDetail * 2.0;
+  vec3 nm = normalize(vec3(-dzdx, -dzdy, 1.));
+  vec3 n = normalize(uRot * nm);
+  vec3 V = normalize(uCam - vW);
+
+  if (uView == 1){ o = vec4(img.rgb, 1.); return; }
+  if (uView == 2){ o = vec4(vec3(hm.r), 1.); return; }
+  if (uView == 3){ o = vec4(nm * .5 + .5, 1.); return; }
+  if (uView == 4) alb = vec3(.62);
+
+  vec3 diffAcc = vec3(0.), specAcc = vec3(0.);
+  float shadowMin = 1.0;
+  mat3 inv = transpose(uRot);
+  for (int i = 0; i < 4; i++){
+    if (i >= uNL) break;
+    vec3 Lv = uLPos[i] - vW;
+    float dist = length(Lv);
+    vec3 L = Lv / dist;
+    float att = 1.5 / (1. + pow(dist / uLReach[i], 2.));
+    float d = (dot(n, L) + uWrap) / (1. + uWrap);
+    float diff;
+    if (uCel == 1){
+      float acc = 0.;
+      for (int k = 0; k < 4; k++){
+        if (k >= uSteps) break;
+        float edge = uBound + float(k) * (1. - uBound) / float(uSteps);
+        acc += smoothstep(edge - uSoft - .002, edge + uSoft + .002, d);
+      }
+      diff = acc / float(uSteps);
+    } else {
+      diff = max(d, 0.);
+    }
+    float sh = 1.0;
+    if (uCast == 1){
+      sh = castShadow(vUV, normalize(inv * L));
+      if (uCel == 1) sh = smoothstep(.5 - uSoft - .04, .5 + uSoft + .04, sh);
+      sh = mix(1., sh, uCastStr);
+    }
+    shadowMin = min(shadowMin, sh);
+    vec3 Hh = normalize(L + V);
+    float sp = pow(max(dot(n, Hh), 0.), uSharp) * step(0., dot(n, L));
+    if (uCel == 1) sp = smoothstep(.45, .55, sp);
+    diffAcc += uLCol[i] * diff * sh * att;
+    specAcc += uLCol[i] * sp * uSpec * sh * att;
+  }
+  float r = 1. - max(dot(n, V), 0.);
+  float rim = pow(r, 2.2) * 4.;
+  if (uCel == 1) rim = smoothstep(.35, .45, rim);
+  vec3 col = alb * (lin(uAmbCol) * uAmb + diffAcc) + specAcc + lin(uRimCol) * clamp(rim, 0., 1.) * uRim * .6;
+  col *= uExposure;
+  o = vec4(pow(clamp(col, 0., 1.), vec3(1. / 2.2)), 1.);
+}`;
+
+function sh(type, src){
+  const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s);
+  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
+  return s;
+}
+const prog = gl.createProgram();
+gl.attachShader(prog, sh(gl.VERTEX_SHADER, VS));
+gl.attachShader(prog, sh(gl.FRAGMENT_SHADER, FS));
+gl.bindAttribLocation(prog, 0, "aUV");
+gl.linkProgram(prog);
+if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
+gl.useProgram(prog);
+const U = {};
+["uH","uImg","uVP","uRot","uSize","uDepth","uHTexel","uITexel","uBump","uTexDetail","uCam","uNL","uLPos","uLCol","uLReach",
+ "uAmbCol","uRimCol","uAmb","uWrap","uBound","uSoft","uCastStr","uCastSoft","uSpec","uSharp","uRim","uExposure","uSteps","uCel","uCast","uView","uCut"]
+ .forEach(n => U[n] = gl.getUniformLocation(prog, n));
+gl.uniform1i(U.uImg, 0); gl.uniform1i(U.uH, 1);
+
+// grid mesh
+const GN = 220;
+{
+  const uv = new Float32Array((GN + 1) * (GN + 1) * 2);
+  let k = 0;
+  for (let y = 0; y <= GN; y++) for (let x = 0; x <= GN; x++){ uv[k++] = x / GN; uv[k++] = y / GN; }
+  const idx = new Uint32Array(GN * GN * 6); k = 0;
+  for (let y = 0; y < GN; y++) for (let x = 0; x < GN; x++){
+    const a = y * (GN + 1) + x, b = a + 1, c = a + GN + 1, d = c + 1;
+    idx[k++] = a; idx[k++] = c; idx[k++] = b; idx[k++] = b; idx[k++] = c; idx[k++] = d;
+  }
+  const vao = gl.createVertexArray(); gl.bindVertexArray(vao);
+  const vb = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, vb); gl.bufferData(gl.ARRAY_BUFFER, uv, gl.STATIC_DRAW);
+  gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+  const ib = gl.createBuffer(); gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ib); gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, idx, gl.STATIC_DRAW);
+}
+const IDX_COUNT = GN * GN * 6;
+
+const texImg = gl.createTexture(), texH = gl.createTexture();
+let imgW = 1, imgH = 1, hW = 1, hH = 1;
+let srcCanvas = null, hasAlpha = false;
+
+function setImage(source, name){
+  const max = 2048, sc = Math.min(1, max / Math.max(source.width, source.height));
+  const c = document.createElement("canvas");
+  c.width = Math.max(1, Math.round(source.width * sc)); c.height = Math.max(1, Math.round(source.height * sc));
+  c.getContext("2d").drawImage(source, 0, 0, c.width, c.height);
+  srcCanvas = c; imgW = c.width; imgH = c.height;
+  gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, texImg);
+  gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, c);
+  gl.generateMipmap(gl.TEXTURE_2D);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  // detect transparency
+  const t = c.getContext("2d").getImageData(0, 0, c.width, c.height).data;
+  let tr = 0; for (let i = 3; i < t.length; i += 16) if (t[i] < 250) tr++;
+  hasAlpha = tr > t.length / 16 * 0.01;
+  S.cutout = hasAlpha;
+  $("#imgName").textContent = name;
+  needDepth = true; refreshUI();
+}
+
+/* ---------- depth estimation (CPU) ---------- */
+function boxBlur(src, w, h, r){
+  if (r < 1) return src;
+  const tmp = new Float32Array(w * h), out = new Float32Array(w * h);
+  for (let y = 0; y < h; y++){
+    let acc = 0; const row = y * w;
+    for (let x = -r; x <= r; x++) acc += src[row + Math.min(w - 1, Math.max(0, x))];
+    for (let x = 0; x < w; x++){
+      tmp[row + x] = acc / (2 * r + 1);
+      acc += src[row + Math.min(w - 1, x + r + 1)] - src[row + Math.max(0, x - r)];
+    }
+  }
+  for (let x = 0; x < w; x++){
+    let acc = 0;
+    for (let y = -r; y <= r; y++) acc += tmp[Math.min(h - 1, Math.max(0, y)) * w + x];
+    for (let y = 0; y < h; y++){
+      out[y * w + x] = acc / (2 * r + 1);
+      acc += tmp[Math.min(h - 1, y + r + 1) * w + x] - tmp[Math.max(0, y - r) * w + x];
+    }
+  }
+  return out;
+}
+function distField(m, w, h){
+  const INF = 1e9, d = new Float32Array(w * h), D = Math.SQRT2;
+  for (let i = 0; i < w * h; i++) d[i] = m[i] ? INF : 0;
+  const g = (x, y) => (x < 0 || y < 0 || x >= w || y >= h) ? 0 : d[y * w + x];
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++){
+    const i = y * w + x; if (!d[i]) continue;
+    d[i] = Math.min(d[i], g(x - 1, y) + 1, g(x, y - 1) + 1, g(x - 1, y - 1) + D, g(x + 1, y - 1) + D);
+  }
+  for (let y = h - 1; y >= 0; y--) for (let x = w - 1; x >= 0; x--){
+    const i = y * w + x; if (!d[i]) continue;
+    d[i] = Math.min(d[i], g(x + 1, y) + 1, g(x, y + 1) + 1, g(x + 1, y + 1) + D, g(x - 1, y + 1) + D);
+  }
+  return d;
+}
+function buildDepth(){
+  needDepth = false;
+  if (!srcCanvas) return;
+  const P = 420, sc = Math.min(1, P / Math.max(imgW, imgH));
+  const w = Math.max(2, Math.round(imgW * sc)), h = Math.max(2, Math.round(imgH * sc));
+  const c = document.createElement("canvas"); c.width = w; c.height = h;
+  const cx = c.getContext("2d"); cx.drawImage(srcCanvas, 0, 0, w, h);
+  const px = cx.getImageData(0, 0, w, h).data;
+  const N = w * h, lum = new Float32Array(N);
+  for (let i = 0; i < N; i++) lum[i] = (px[i*4] * .299 + px[i*4+1] * .587 + px[i*4+2] * .114) / 255;
+
+  // foreground mask
+  let mask = new Float32Array(N);
+  if (hasAlpha){
+    for (let i = 0; i < N; i++) mask[i] = px[i*4+3] > 127 ? 1 : 0;
+  } else if (S.bgThr > 0){
+    let r = 0, g = 0, b = 0, n = 0;
+    const add = i => { r += px[i*4]; g += px[i*4+1]; b += px[i*4+2]; n++; };
+    for (let x = 0; x < w; x++){ add(x); add((h - 1) * w + x); }
+    for (let y = 0; y < h; y++){ add(y * w); add(y * w + w - 1); }
+    r /= n; g /= n; b /= n;
+    const thr = S.bgThr * 255 * 1.732;
+    for (let i = 0; i < N; i++){
+      const dr = px[i*4] - r, dg = px[i*4+1] - g, db = px[i*4+2] - b;
+      mask[i] = Math.sqrt(dr*dr + dg*dg + db*db) > thr ? 1 : 0;
+    }
+  } else mask.fill(1);
+  const softMask = boxBlur(boxBlur(mask, w, h, 1), w, h, 1);
+  for (let i = 0; i < N; i++) mask[i] = softMask[i] > 0.5 ? 1 : 0;
+  let fg = 0; for (let i = 0; i < N; i++) fg += mask[i];
+  if (fg < N * 0.01){ mask.fill(1); softMask.fill(1); }
+
+  // global dome
+  const dg = distField(mask, w, h);
+  let maxD = 1; for (let i = 0; i < N; i++) if (dg[i] > maxD) maxD = dg[i];
+  // local parts split by line art
+  const lineThr = S.lineCut * 0.45;
+  const parts = new Uint8Array(N);
+  for (let i = 0; i < N; i++) parts[i] = mask[i] && lum[i] >= lineThr ? 1 : 0;
+  const dl = distField(parts, w, h);
+  const R = Math.max(4, Math.max(w, h) * 0.035);
+
+  let H = new Float32Array(N);
+  for (let i = 0; i < N; i++){
+    if (!mask[i]){ H[i] = 0; continue; }
+    const xg = Math.min(dg[i] / (maxD * 0.65), 1), dome = Math.sqrt(1 - (1 - xg) * (1 - xg));
+    const xl = Math.min(dl[i] / R, 1), domeL = Math.sqrt(1 - (1 - xl) * (1 - xl));
+    H[i] = 0.08 + S.puff * dome + S.detail * domeL * 0.35 + S.lumW * (lum[i] - 0.5) * 0.5;
+  }
+  const r = Math.round(S.smooth);
+  H = boxBlur(boxBlur(H, w, h, r), w, h, r);
+  let mn = Infinity, mx = -Infinity;
+  for (let i = 0; i < N; i++){ if (H[i] < mn) mn = H[i]; if (H[i] > mx) mx = H[i]; }
+  const span = mx - mn > 1e-5 ? mx - mn : 1;
+  const data = new Float32Array(N * 4);
+  for (let i = 0; i < N; i++){ data[i*4] = (H[i] - mn) / span; data[i*4+1] = softMask[i]; data[i*4+3] = 1; }
+
+  hW = w; hH = h;
+  gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, texH);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA16F, w, h, 0, gl.RGBA, gl.FLOAT, data);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+}
+
+/* ---------- math ---------- */
+function mul4(a, b){ const o = new Float32Array(16);
+  for (let c = 0; c < 4; c++) for (let r = 0; r < 4; r++){ let s = 0; for (let k = 0; k < 4; k++) s += a[k*4+r] * b[c*4+k]; o[c*4+r] = s; }
+  return o; }
+function mul3(a, b){ const o = new Float32Array(9);
+  for (let c = 0; c < 3; c++) for (let r = 0; r < 3; r++){ let s = 0; for (let k = 0; k < 3; k++) s += a[k*3+r] * b[c*3+k]; o[c*3+r] = s; }
+  return o; }
+function persp(fy, a, n, f){ const t = 1 / Math.tan(fy / 2);
+  return new Float32Array([t/a,0,0,0, 0,t,0,0, 0,0,(f+n)/(n-f),-1, 0,0,2*f*n/(n-f),0]); }
+const rotY = t => { const c = Math.cos(t), s = Math.sin(t); return new Float32Array([c,0,-s, 0,1,0, s,0,c]); };
+const rotX = t => { const c = Math.cos(t), s = Math.sin(t); return new Float32Array([1,0,0, 0,c,s, 0,-s,c]); };
+const hex = h => [parseInt(h.slice(1,3),16)/255, parseInt(h.slice(3,5),16)/255, parseInt(h.slice(5,7),16)/255];
+
+/* ---------- interaction ---------- */
+const stage = $("#stage");
+let tgtYaw = 0, tgtPitch = 0, yaw = 0, pitch = 0;
+stage.addEventListener("pointermove", e => {
+  const r = stage.getBoundingClientRect();
+  tgtYaw = ((e.clientX - r.left) / r.width - 0.5) * 2;
+  tgtPitch = ((e.clientY - r.top) / r.height - 0.5) * 2;
+});
+stage.addEventListener("pointerleave", () => { tgtYaw = 0; tgtPitch = 0; });
+
+// light pad
+const pad = $("#pad"), pctx = pad.getContext("2d");
+let padDrag = false;
+function padToLight(e){
+  const r = pad.getBoundingClientRect();
+  const x = ((e.clientX - r.left) / r.width - 0.5) * 2 * (r.width / r.height);
+  const y = -((e.clientY - r.top) / r.height - 0.5) * 2;
+  return [x, y];
+}
+pad.addEventListener("pointerdown", e => {
+  const [x, y] = padToLight(e);
+  let best = sel, bd = 0.12;
+  lights.forEach((l, i) => { const d = Math.hypot(l.x - x, l.y - y); if (d < bd){ bd = d; best = i; } });
+  if (best !== sel){ sel = best; refreshUI(); }
+  padDrag = true; pad.setPointerCapture(e.pointerId);
+  lights[sel].x = x; lights[sel].y = y;
+});
+pad.addEventListener("pointermove", e => { if (!padDrag) return; const [x, y] = padToLight(e); lights[sel].x = x; lights[sel].y = y; });
+pad.addEventListener("pointerup", () => padDrag = false);
+
+function drawPad(){
+  const dpr = Math.min(2, devicePixelRatio || 1), r = pad.getBoundingClientRect();
+  if (pad.width !== Math.round(r.width * dpr)){ pad.width = Math.round(r.width * dpr); pad.height = Math.round(r.height * dpr); }
+  const W = pad.width, Hh = pad.height, k = Hh / 2;
+  pctx.clearRect(0, 0, W, Hh);
+  const [pw, ph] = planeSize();
+  if (srcCanvas){ pctx.globalAlpha = 0.35; pctx.drawImage(srcCanvas, W/2 - pw/2*k, Hh/2 - ph/2*k, pw*k, ph*k); pctx.globalAlpha = 1; }
+  pctx.strokeStyle = "#2e303b"; pctx.lineWidth = 1;
+  pctx.beginPath(); pctx.arc(W/2, Hh/2, k * 0.9, 0, Math.PI * 2); pctx.stroke();
+  lights.forEach((l, i) => {
+    const x = W/2 + l.x * k, y = Hh/2 - l.y * k;
+    const rad = (5 + Math.max(0, l.height) * 3) * dpr;
+    pctx.globalAlpha = l.on ? 1 : 0.35;
+    pctx.fillStyle = l.color; pctx.beginPath(); pctx.arc(x, y, rad, 0, Math.PI * 2); pctx.fill();
+    if (l.height < 0){ pctx.strokeStyle = "#111217"; pctx.lineWidth = 2*dpr; pctx.beginPath(); pctx.arc(x, y, rad*0.5, 0, Math.PI*2); pctx.stroke(); }
+    if (i === sel){ pctx.strokeStyle = "#5fd3c4"; pctx.lineWidth = 2 * dpr; pctx.beginPath(); pctx.arc(x, y, rad + 4*dpr, 0, Math.PI * 2); pctx.stroke(); }
+    pctx.globalAlpha = 1;
+  });
+}
+
+// file loading
+const fileIn = $("#file");
+$("#openBtn").onclick = () => fileIn.click();
+function loadFile(f){
+  if (!f || !f.type.startsWith("image/")) return;
+  const url = URL.createObjectURL(f), im = new Image();
+  im.onload = () => { setImage(im, f.name || "貼り付けた画像"); URL.revokeObjectURL(url); };
+  im.src = url;
+}
+fileIn.onchange = () => loadFile(fileIn.files[0]);
+const drop = $("#drop");
+addEventListener("dragover", e => { e.preventDefault(); drop.hidden = false; });
+addEventListener("dragleave", e => { if (!e.relatedTarget) drop.hidden = true; });
+addEventListener("drop", e => { e.preventDefault(); drop.hidden = true; loadFile(e.dataTransfer.files[0]); });
+addEventListener("paste", e => {
+  for (const it of e.clipboardData.items) if (it.type.startsWith("image/")){ loadFile(it.getAsFile()); break; }
+});
+
+// export
+function download(blob, name){
+  const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = name;
+  document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+}
+$("#pngBtn").onclick = () => canvas.toBlob(b => b && download(b, "depth-light.png"));
+let recording = false;
+$("#vidBtn").onclick = () => {
+  if (recording || !window.MediaRecorder || !canvas.captureStream) return;
+  const mime = ["video/webm;codecs=vp9", "video/webm", "video/mp4"].find(m => MediaRecorder.isTypeSupported(m));
+  if (!mime) return;
+  const rec = new MediaRecorder(canvas.captureStream(30), {mimeType:mime, videoBitsPerSecond:8e6});
+  const chunks = []; rec.ondataavailable = e => chunks.push(e.data);
+  rec.onstop = () => { recording = false; $("#vidBtn").textContent = "動画保存 (4秒)"; download(new Blob(chunks, {type:mime}), "depth-light." + (mime.includes("mp4") ? "mp4" : "webm")); };
+  recording = true; $("#vidBtn").textContent = "録画中…"; rec.start(); setTimeout(() => rec.stop(), 4000);
+};
+
+/* ---------- render ---------- */
+function planeSize(){ const a = imgW / imgH; return a >= 1 ? [1, 1 / a] : [a, 1]; }
+function resize(){
+  const dpr = Math.min(2, devicePixelRatio || 1), r = stage.getBoundingClientRect();
+  const w = Math.max(1, Math.round(r.width * dpr)), h = Math.max(1, Math.round(r.height * dpr));
+  if (canvas.width !== w || canvas.height !== h){ canvas.width = w; canvas.height = h; }
+}
+let last = performance.now(), clock = 0;
+function frame(now){
+  const dt = Math.min(0.05, (now - last) / 1000); last = now; clock += dt;
+  if (needDepth) buildDepth();
+  resize();
+  for (const l of lights) if (l.auto){
+    const a = dt * 0.8, c = Math.cos(a), s = Math.sin(a);
+    [l.x, l.y] = [l.x * c - l.y * s, l.x * s + l.y * c];
+  }
+  const A = S.maxAngle * Math.PI / 180;
+  const swayY = Math.sin(clock * S.swaySpeed * 2.1) * S.sway, swayP = Math.sin(clock * S.swaySpeed * 1.3 + 1.2) * S.sway * 0.5;
+  const ty = (recording ? 0 : tgtYaw * S.follow) + swayY, tp = (recording ? 0 : tgtPitch * S.follow) + swayP;
+  const f = 1 - Math.pow(0.002, dt);
+  yaw += (ty * A - yaw) * f; pitch += (tp * A - pitch) * f;
+
+  const [pw, ph] = planeSize();
+  const va = canvas.width / canvas.height, fov = 32 * Math.PI / 180;
+  const fit = Math.max(ph, pw / va) + S.depth * 0.3;
+  const dist = fit * 0.5 / Math.tan(fov / 2) * 1.15 / S.zoom;
+  const P = persp(fov, va, 0.05, 50);
+  const V = new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,-dist,1]);
+  const rot = mul3(rotY(yaw), rotX(pitch));
+
+  gl.viewport(0, 0, canvas.width, canvas.height);
+  gl.clearColor(0.086, 0.09, 0.114, 1);
+  gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+  gl.enable(gl.DEPTH_TEST);
+  gl.useProgram(prog);
+  gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, texImg);
+  gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, texH);
+  gl.uniformMatrix4fv(U.uVP, false, mul4(P, V));
+  gl.uniformMatrix3fv(U.uRot, false, rot);
+  gl.uniform2f(U.uSize, pw, ph);
+  gl.uniform1f(U.uDepth, S.depth);
+  gl.uniform2f(U.uHTexel, 1 / hW, 1 / hH);
+  gl.uniform2f(U.uITexel, 1 / imgW, 1 / imgH);
+  gl.uniform1f(U.uBump, S.bump);
+  gl.uniform1f(U.uTexDetail, S.texDetail);
+  gl.uniform3f(U.uCam, 0, 0, dist);
+  const on = lights.filter(l => l.on);
+  const pos = new Float32Array(12), col = new Float32Array(12), reach = new Float32Array(4);
+  on.forEach((l, i) => {
+    pos.set([l.x, l.y, l.height], i * 3);
+    const c = hex(l.color).map(v => Math.pow(v, 2.2) * l.strength); col.set(c, i * 3);
+    reach[i] = l.reach;
+  });
+  gl.uniform1i(U.uNL, on.length);
+  gl.uniform3fv(U.uLPos, pos); gl.uniform3fv(U.uLCol, col); gl.uniform1fv(U.uLReach, reach);
+  gl.uniform3fv(U.uAmbCol, hex(S.ambColor)); gl.uniform3fv(U.uRimCol, hex(S.rimColor));
+  gl.uniform1f(U.uAmb, S.amb); gl.uniform1f(U.uWrap, S.wrap); gl.uniform1f(U.uBound, S.bound); gl.uniform1f(U.uSoft, S.soft);
+  gl.uniform1f(U.uCastStr, S.castStr); gl.uniform1f(U.uCastSoft, S.castSoft);
+  gl.uniform1f(U.uSpec, S.spec); gl.uniform1f(U.uSharp, S.sharp); gl.uniform1f(U.uRim, S.rim); gl.uniform1f(U.uExposure, S.exposure);
+  gl.uniform1i(U.uSteps, S.steps); gl.uniform1i(U.uCel, S.cel); gl.uniform1i(U.uCast, S.castOn ? 1 : 0);
+  gl.uniform1i(U.uView, view); gl.uniform1i(U.uCut, S.cutout ? 1 : 0);
+  gl.drawElements(gl.TRIANGLES, IDX_COUNT, gl.UNSIGNED_INT, 0);
+
+  drawPad();
+  requestAnimationFrame(frame);
+}
+
+/* ---------- sample illustration ---------- */
+function sample(){
+  const c = document.createElement("canvas"); c.width = 800; c.height = 1000;
+  const x = c.getContext("2d");
+  x.fillStyle = "#dfe5f1"; x.fillRect(0, 0, 800, 1000);
+  x.lineJoin = "round"; x.lineCap = "round";
+  const ink = "#2a2233";
+  const stroke = (w = 10) => { x.strokeStyle = ink; x.lineWidth = w; x.stroke(); };
+  // ears
+  for (const s of [-1, 1]){
+    x.beginPath(); x.moveTo(400 + s*120, 360); x.lineTo(400 + s*215, 175); x.lineTo(400 + s*235, 400); x.closePath();
+    x.fillStyle = "#fff6ec"; x.fill(); stroke();
+    x.beginPath(); x.moveTo(400 + s*150, 350); x.lineTo(400 + s*208, 235); x.lineTo(400 + s*215, 370); x.closePath();
+    x.fillStyle = "#f6b8c4"; x.fill();
+  }
+  // body
+  x.beginPath(); x.ellipse(400, 640, 265, 300, 0, 0, Math.PI * 2); x.fillStyle = "#fff6ec"; x.fill(); stroke();
+  // belly
+  x.beginPath(); x.ellipse(400, 760, 150, 140, 0, 0, Math.PI * 2); x.fillStyle = "#ffe7cf"; x.fill(); stroke(7);
+  // scarf
+  x.beginPath(); x.moveTo(170, 585); x.quadraticCurveTo(400, 650, 630, 585); x.lineTo(625, 640); x.quadraticCurveTo(400, 710, 175, 640); x.closePath();
+  x.fillStyle = "#e0524f"; x.fill(); stroke(8);
+  x.beginPath(); x.moveTo(520, 650); x.lineTo(560, 790); x.lineTo(610, 770); x.lineTo(575, 630); x.closePath(); x.fillStyle = "#e0524f"; x.fill(); stroke(8);
+  // eyes
+  for (const s of [-1, 1]){
+    x.beginPath(); x.ellipse(400 + s*95, 470, 34, 44, 0, 0, Math.PI*2); x.fillStyle = ink; x.fill();
+    x.beginPath(); x.arc(400 + s*95 - 10, 455, 12, 0, Math.PI*2); x.fillStyle = "#ffffff"; x.fill();
+    x.beginPath(); x.ellipse(400 + s*150, 540, 34, 20, 0, 0, Math.PI*2); x.fillStyle = "rgba(240,128,150,.55)"; x.fill();
+  }
+  x.beginPath(); x.moveTo(370, 530); x.quadraticCurveTo(385, 552, 400, 532); x.quadraticCurveTo(415, 552, 430, 530); stroke(7);
+  // star
+  x.save(); x.translate(640, 300); x.rotate(0.25); x.beginPath();
+  for (let i = 0; i < 10; i++){ const r = i % 2 ? 42 : 95, a = -Math.PI/2 + i * Math.PI / 5; x.lineTo(Math.cos(a)*r, Math.sin(a)*r); }
+  x.closePath(); x.fillStyle = "#f7c948"; x.fill(); stroke(9); x.restore();
+  // paws
+  for (const s of [-1, 1]){ x.beginPath(); x.ellipse(400 + s*110, 905, 70, 42, 0, 0, Math.PI*2); x.fillStyle = "#fff6ec"; x.fill(); stroke(); }
+  return c;
+}
+
+refreshUI();
+setImage(sample(), "サンプル画像（自分の画像を読み込んでください）");
+requestAnimationFrame(frame);
+</script>
